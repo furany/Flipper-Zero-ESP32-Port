@@ -12,6 +12,11 @@ bool wlan_hal_start(void);
 /** Beende den WiFi-Stack und stelle BT wieder her. Idempotent. */
 void wlan_hal_stop(void);
 
+/** Beende den WiFi-Stack, lasse BT aber aus. Liefert true, wenn BT beim
+ *  vorherigen wlan_hal_start() aktiv war und der Aufrufer es später wieder
+ *  herstellen soll. Für Übergaben an SoftAP/Evil-Portal-Mode. */
+bool wlan_hal_stop_keep_bt_off(void);
+
 bool wlan_hal_is_started(void);
 
 /** Stellt nur den WLAN-Worker-Task + Command-Queue sicher, ohne den WiFi-

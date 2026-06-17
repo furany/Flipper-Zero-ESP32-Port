@@ -345,7 +345,9 @@ bool wlan_hal_start(void) {
     return result;
 }
 
-void wlan_hal_stop(void) {
+static bool wlan_hal_stop_internal(bool restore_bt) {
+    bool bt_restore_needed = s_bt_was_on;
+
     if(s_started) {
         WlanCmd cmd = {.type = WCMD_STOP_DEINIT};
         wlan_send_cmd_sync(&cmd);
@@ -353,12 +355,25 @@ void wlan_hal_stop(void) {
         ESP_LOGI(TAG, "WiFi stopped");
     }
 
-    if(s_bt_was_on) {
+    if(restore_bt && s_bt_was_on) {
         Bt* bt = furi_record_open(RECORD_BT);
         bt_start_stack(bt);
         furi_record_close(RECORD_BT);
         s_bt_was_on = false;
+    } else if(!restore_bt && s_bt_was_on) {
+        ESP_LOGI(TAG, "BT restore deferred");
+        s_bt_was_on = false;
     }
+
+    return bt_restore_needed;
+}
+
+void wlan_hal_stop(void) {
+    (void)wlan_hal_stop_internal(true);
+}
+
+bool wlan_hal_stop_keep_bt_off(void) {
+    return wlan_hal_stop_internal(false);
 }
 
 bool wlan_hal_is_started(void) {

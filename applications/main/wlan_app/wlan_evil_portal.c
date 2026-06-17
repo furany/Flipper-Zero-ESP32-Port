@@ -1251,14 +1251,16 @@ bool wlan_hal_evil_portal_start(const WlanHalEvilPortalConfig* cfg) {
         return false;
     }
 
+    bool restore_bt_after_sta_stop = false;
     if(wlan_hal_is_started()) {
         ESP_LOGI(TAG, "start: stopping STA mode first");
-        wlan_hal_stop();
+        restore_bt_after_sta_stop = wlan_hal_stop_keep_bt_off();
     }
 
     Bt* bt = furi_record_open(RECORD_BT);
-    s_bt_was_on = bt_is_enabled(bt);
-    if(s_bt_was_on) {
+    bool bt_enabled = bt_is_enabled(bt);
+    s_bt_was_on = restore_bt_after_sta_stop || bt_enabled;
+    if(bt_enabled) {
         ESP_LOGI(TAG, "start: stopping BLE stack to free RAM");
         bt_stop_stack(bt);
     }
